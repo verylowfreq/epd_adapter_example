@@ -1,0 +1,1160 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EPD Image Sender</title>
+  <style>
+    :root {
+      --bg: #f2f4f7;
+      --panel: #ffffff;
+      --line: #d0d7de;
+      --text: #17212b;
+      --accent: #0b6bcb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Meiryo", sans-serif;
+      background: linear-gradient(180deg, #f7f9fc, #ecf1f7 55%, #e5edf6);
+      color: var(--text);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 6px 18px rgba(20, 45, 80, 0.08);
+    }
+
+    .left {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      height: calc(100vh - 32px);
+      overflow: auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    input[type="number"], select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: #fff;
+      font-size: 13px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 12px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: #0856a3;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .preview-wrap {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .viewer {
+      position: relative;
+      aspect-ratio: 250 / 122;
+      width: min(100%, 1080px);
+      max-height: calc(100vh - 180px);
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #c6cfdb;
+      overflow: hidden;
+    }
+
+    #editorCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #editorCanvas.dragging { cursor: grabbing; }
+
+    .meta {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: #f7f8fa;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      white-space: pre-wrap;
+    }
+
+    .status {
+      font-size: 13px;
+      font-weight: 700;
+      min-height: 1.5em;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .left {
+        height: auto;
+      }
+      .viewer {
+        max-height: 45vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="left panel">
+      <h1>EPD Image Sender</h1>
+
+      <div class="row">
+        <label>画像<input id="imageFile" type="file" accept="image/*" /></label>
+      </div>
+
+      <div class="row">
+        <label>2値化
+          <select id="bwMode">
+            <option value="dither">ディザリング</option>
+            <option value="threshold">閾値</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="row" id="paramRow">
+        <label><span id="paramLabel">ガンマ</span>
+          <input id="paramSlider" type="range" min="40" max="250" value="100" />
+        </label>
+        <span id="paramVal">1.00</span>
+      </div>
+
+      <div class="split">
+        <div>
+          <label>ズーム</label>
+          <input id="zoom" type="range" min="10" max="2000" value="100" />
+        </div>
+        <div>
+          <label>角度 <span id="rotationVal">0.0°</span></label>
+          <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="rotateRight90">右に90°</button>
+      </div>
+
+      <div class="row">
+        <button id="resetView">ビュー初期化</button>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:4px 0 2px;" />
+
+      <div class="row">
+        <label style="min-width:70px;">Serial</label>
+        <button id="serialConnectBtn">接続</button>
+        <button id="serialDisconnectBtn" disabled>切断</button>
+        <button class="primary" id="serialSendBtn" disabled>送信</button>
+      </div>
+      <div class="row">
+        <label style="min-width:70px;">WebUSB</label>
+        <button id="usbConnectBtn">接続</button>
+        <button id="usbDisconnectBtn" disabled>切断</button>
+        <button class="primary" id="usbSendBtn" disabled>送信</button>
+      </div>
+
+      <div class="meta" id="serialMeta">Port: -
+Baud: 115200
+Target: 250x122
+Payload: 3843 bytes</div>
+      <div class="status" id="status"></div>
+
+      <div style="font-size:12px;color:#4c5563;">表示は2値化結果です。ドラッグでパン / ホイールでズームして表示領域を調整します。</div>
+    </aside>
+
+    <main class="preview-wrap">
+      <section id="viewer" class="panel viewer">
+        <canvas id="editorCanvas" width="1250" height="610"></canvas>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    let TARGET_W = 250;
+    let TARGET_H = 122;
+    const BAUD = 115200;
+    const CHUNK_BYTES = 62;
+
+    const ui = {
+      imageFile: document.getElementById('imageFile'),
+      bwMode: document.getElementById('bwMode'),
+      paramRow: document.getElementById('paramRow'),
+      paramLabel: document.getElementById('paramLabel'),
+      paramSlider: document.getElementById('paramSlider'),
+      paramVal: document.getElementById('paramVal'),
+      zoom: document.getElementById('zoom'),
+      rotation: document.getElementById('rotation'),
+      rotationVal: document.getElementById('rotationVal'),
+      rotateRight90: document.getElementById('rotateRight90'),
+      resetView: document.getElementById('resetView'),
+      serialConnectBtn: document.getElementById('serialConnectBtn'),
+      serialDisconnectBtn: document.getElementById('serialDisconnectBtn'),
+      serialSendBtn: document.getElementById('serialSendBtn'),
+      usbConnectBtn: document.getElementById('usbConnectBtn'),
+      usbDisconnectBtn: document.getElementById('usbDisconnectBtn'),
+      usbSendBtn: document.getElementById('usbSendBtn'),
+      status: document.getElementById('status'),
+      serialMeta: document.getElementById('serialMeta'),
+      viewer: document.getElementById('viewer'),
+      editorCanvas: document.getElementById('editorCanvas'),
+    };
+
+    const editorCtx = ui.editorCanvas.getContext('2d', { alpha: false });
+
+    const composeCanvas = document.createElement('canvas');
+    composeCanvas.width = TARGET_W;
+    composeCanvas.height = TARGET_H;
+    const composeCtx = composeCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
+
+    const bwPreviewCanvas = document.createElement('canvas');
+    bwPreviewCanvas.width = TARGET_W;
+    bwPreviewCanvas.height = TARGET_H;
+    const bwPreviewCtx = bwPreviewCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
+
+    let srcImage = null;
+    let state = {
+      zoom: 1.0,
+      panX: 0,
+      panY: 0,
+      dragging: false,
+      bwMode: 'dither',
+      threshold: 128,
+      gamma100: 100,
+      rotationDeg: 0,
+    };
+    let loadedViewState = {
+      zoom: 1.0,
+      panX: 0,
+      panY: 0,
+      rotationDeg: 0,
+    };
+    const activePointers = new Map();
+    let dragPointerId = null;
+    let dragLastX = 0;
+    let dragLastY = 0;
+    let pinchGesture = null;
+
+    const serialState = {
+      port: null,
+      reader: null,
+      writer: null,
+      readBuffer: new Uint8Array(0),
+    };
+    const usbState = {
+      device: null,
+      interfaceNumber: null,
+      alternateSetting: null,
+      inEndpoint: null,
+      outEndpoint: null,
+      inPacketSize: 64,
+      readBuffer: new Uint8Array(0),
+    };
+
+    function setStatus(msg, isErr = false) {
+      ui.status.textContent = msg;
+      ui.status.style.color = isErr ? '#b82020' : '#115da7';
+    }
+
+    function bytesPerPayload() {
+      return Math.ceil(TARGET_W / 8) * TARGET_H;
+    }
+
+    function syncTargetGeometry() {
+      composeCanvas.width = TARGET_W;
+      composeCanvas.height = TARGET_H;
+      bwPreviewCanvas.width = TARGET_W;
+      bwPreviewCanvas.height = TARGET_H;
+      ui.editorCanvas.width = TARGET_W * 5;
+      ui.editorCanvas.height = TARGET_H * 5;
+      ui.viewer.style.aspectRatio = `${TARGET_W} / ${TARGET_H}`;
+    }
+
+    function serialConnected() {
+      return !!serialState.port;
+    }
+
+    function usbConnected() {
+      return !!usbState.device;
+    }
+
+    function updateTransportButtons() {
+      ui.serialConnectBtn.disabled = serialConnected();
+      ui.serialDisconnectBtn.disabled = !serialConnected();
+      ui.serialSendBtn.disabled = !serialConnected() || !srcImage;
+
+      ui.usbConnectBtn.disabled = usbConnected();
+      ui.usbDisconnectBtn.disabled = !usbConnected();
+      ui.usbSendBtn.disabled = !usbConnected() || !srcImage;
+    }
+
+    function updateMeta() {
+      const serialText = serialConnected() ? 'connected' : '-';
+      const usbText = usbConnected() ? 'connected' : '-';
+      ui.serialMeta.textContent = `Serial: ${serialText}\nWebUSB: ${usbText}\nBaud: ${BAUD}\nTarget: ${TARGET_W}x${TARGET_H}\nPayload: ${bytesPerPayload()} bytes`;
+      updateTransportButtons();
+    }
+
+    function syncBwParamUI() {
+      if (state.bwMode === 'threshold') {
+        ui.paramLabel.textContent = '閾値';
+        ui.paramSlider.min = '0';
+        ui.paramSlider.max = '255';
+        ui.paramSlider.step = '1';
+        ui.paramSlider.value = String(state.threshold);
+        ui.paramVal.textContent = String(state.threshold);
+      } else {
+        ui.paramLabel.textContent = 'ガンマ';
+        ui.paramSlider.min = '40';
+        ui.paramSlider.max = '250';
+        ui.paramSlider.step = '1';
+        ui.paramSlider.value = String(state.gamma100);
+        ui.paramVal.textContent = (state.gamma100 / 100).toFixed(2);
+      }
+    }
+
+    function resetView() {
+      state.zoom = loadedViewState.zoom;
+      state.panX = loadedViewState.panX;
+      state.panY = loadedViewState.panY;
+      state.rotationDeg = loadedViewState.rotationDeg;
+      ui.zoom.value = String(Math.round(state.zoom * 100));
+      syncRotationUI();
+      renderAll();
+    }
+
+    function normalizedRotationDeg() {
+      let r = state.rotationDeg % 360;
+      if (r < 0) r += 360;
+      return r;
+    }
+
+    function signedRotationDeg() {
+      let d = normalizedRotationDeg();
+      if (d > 180) d -= 360;
+      return d;
+    }
+
+    function syncRotationUI() {
+      const d = signedRotationDeg();
+      ui.rotation.value = String(Math.round(d));
+      ui.rotationVal.textContent = `${d.toFixed(1)}°`;
+    }
+
+    function logicalImageSize() {
+      if (!srcImage) return { w: 1, h: 1 };
+      const rad = (normalizedRotationDeg() * Math.PI) / 180;
+      const c = Math.abs(Math.cos(rad));
+      const s = Math.abs(Math.sin(rad));
+      return {
+        w: srcImage.width * c + srcImage.height * s,
+        h: srcImage.width * s + srcImage.height * c,
+      };
+    }
+
+    function baseScale() {
+      if (!srcImage) return 1;
+      const logical = logicalImageSize();
+      const sx = TARGET_W / logical.w;
+      const sy = TARGET_H / logical.h;
+      // contain fixed: zoom out keeps padding, zoom in moves into crop seamlessly.
+      return Math.min(sx, sy);
+    }
+
+    function drawComposed(destCtx, destW, destH) {
+      destCtx.save();
+      destCtx.fillStyle = '#ffffff';
+      destCtx.fillRect(0, 0, destW, destH);
+
+      if (srcImage) {
+        const factor = destW / TARGET_W;
+        const scale = baseScale() * state.zoom * factor;
+        const cx = destW / 2 + state.panX * factor;
+        const cy = destH / 2 + state.panY * factor;
+        const drawW = srcImage.width * scale;
+        const drawH = srcImage.height * scale;
+
+        destCtx.imageSmoothingEnabled = true;
+        destCtx.imageSmoothingQuality = 'high';
+        destCtx.translate(cx, cy);
+        destCtx.rotate((normalizedRotationDeg() * Math.PI) / 180);
+        destCtx.drawImage(srcImage, -drawW / 2, -drawH / 2, drawW, drawH);
+      }
+      destCtx.restore();
+    }
+
+    function clampPan() {
+      if (!srcImage) {
+        state.panX = 0;
+        state.panY = 0;
+        return;
+      }
+      const scale = baseScale() * state.zoom;
+      const logical = logicalImageSize();
+      const imgW = logical.w * scale;
+      const imgH = logical.h * scale;
+      const maxX = (imgW + TARGET_W) / 2;
+      const maxY = (imgH + TARGET_H) / 2;
+      state.panX = Math.min(maxX, Math.max(-maxX, state.panX));
+      state.panY = Math.min(maxY, Math.max(-maxY, state.panY));
+    }
+
+    function renderBWTarget() {
+      drawComposed(composeCtx, TARGET_W, TARGET_H);
+      const img = composeCtx.getImageData(0, 0, TARGET_W, TARGET_H);
+      const data = img.data;
+      const gray = new Float32Array(TARGET_W * TARGET_H);
+      const gamma = Math.max(0.4, Math.min(2.5, state.gamma100 / 100));
+
+      for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+        const lum = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+        gray[i] = 255 * Math.pow(lum / 255, gamma);
+      }
+
+      if (state.bwMode === 'threshold') {
+        const th = state.threshold;
+        for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+          const v = gray[i] >= th ? 255 : 0;
+          data[p] = v;
+          data[p + 1] = v;
+          data[p + 2] = v;
+          data[p + 3] = 255;
+        }
+      } else {
+        const w = TARGET_W;
+        const h = TARGET_H;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            const oldV = gray[i];
+            const newV = oldV >= 128 ? 255 : 0;
+            const err = oldV - newV;
+            gray[i] = newV;
+
+            if (x + 1 < w) gray[i + 1] += err * 7 / 16;
+            if (y + 1 < h) {
+              if (x > 0) gray[i + w - 1] += err * 3 / 16;
+              gray[i + w] += err * 5 / 16;
+              if (x + 1 < w) gray[i + w + 1] += err * 1 / 16;
+            }
+          }
+        }
+        for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+          const v = gray[i] >= 128 ? 255 : 0;
+          data[p] = v;
+          data[p + 1] = v;
+          data[p + 2] = v;
+          data[p + 3] = 255;
+        }
+      }
+
+      bwPreviewCtx.putImageData(img, 0, 0);
+      return img;
+    }
+
+    function renderEditor() {
+      const w = ui.editorCanvas.width;
+      const h = ui.editorCanvas.height;
+      editorCtx.fillStyle = '#bdc7d5';
+      editorCtx.fillRect(0, 0, w, h);
+
+      if (srcImage) {
+        renderBWTarget();
+        editorCtx.imageSmoothingEnabled = false;
+        editorCtx.drawImage(bwPreviewCanvas, 0, 0, TARGET_W, TARGET_H, 0, 0, w, h);
+      }
+
+      editorCtx.strokeStyle = '#ffffff';
+      editorCtx.lineWidth = 2;
+      editorCtx.strokeRect(1, 1, w - 2, h - 2);
+
+      if (!srcImage) {
+        editorCtx.fillStyle = '#2d3a4c';
+        editorCtx.font = 'bold 26px Segoe UI';
+        editorCtx.fillText('画像を選択してください', 28, 48);
+      }
+    }
+
+    function renderAll() {
+      clampPan();
+      renderEditor();
+      updateTransportButtons();
+    }
+
+    function packPayload(imgData) {
+      const out = new Uint8Array(bytesPerPayload());
+      const data = imgData.data;
+      const rowBytes = Math.ceil(TARGET_W / 8);
+      let idx = 0;
+
+      for (let y = 0; y < TARGET_H; y++) {
+        for (let xb = 0; xb < rowBytes; xb++) {
+          let b = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const x = xb * 8 + bit;
+            b <<= 1;
+            if (x < TARGET_W) {
+              const p = (y * TARGET_W + x) * 4;
+              const isBlack = data[p] === 0;
+              if (isBlack) b |= 1;
+            }
+          }
+          out[idx++] = b;
+        }
+      }
+      return out;
+    }
+
+    async function ensureSerialReaderWriter() {
+      if (!serialState.port) throw new Error('Serial not connected');
+      if (!serialState.reader) {
+        serialState.reader = serialState.port.readable.getReader();
+      }
+      if (!serialState.writer) {
+        serialState.writer = serialState.port.writable.getWriter();
+      }
+    }
+
+    function appendBuffer(oldBuf, value) {
+      const merged = new Uint8Array(oldBuf.length + value.length);
+      merged.set(oldBuf, 0);
+      merged.set(value, oldBuf.length);
+      return merged;
+    }
+
+    async function readExactSerial(n, timeoutMs = 4000) {
+      const started = performance.now();
+      while (serialState.readBuffer.length < n) {
+        if (performance.now() - started > timeoutMs) {
+          throw new Error(`ACK timeout (${n} bytes)`);
+        }
+        const { value, done } = await serialState.reader.read();
+        if (done) throw new Error('Serial closed while reading');
+        if (value && value.length > 0) {
+          serialState.readBuffer = appendBuffer(serialState.readBuffer, value);
+        }
+      }
+      const out = serialState.readBuffer.slice(0, n);
+      serialState.readBuffer = serialState.readBuffer.slice(n);
+      return out;
+    }
+
+    async function readExactUsb(n, timeoutMs = 4000) {
+      const started = performance.now();
+      while (usbState.readBuffer.length < n) {
+        if (performance.now() - started > timeoutMs) {
+          throw new Error(`ACK timeout (${n} bytes)`);
+        }
+        const remain = Math.max(1, Math.ceil(timeoutMs - (performance.now() - started)));
+        const result = await Promise.race([
+          usbState.device.transferIn(usbState.inEndpoint, usbState.inPacketSize || 64),
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`ACK timeout (${n} bytes)`)), remain)),
+        ]);
+        if (result.status !== 'ok' || !result.data || result.data.byteLength === 0) {
+          continue;
+        }
+        const value = new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+        usbState.readBuffer = appendBuffer(usbState.readBuffer, value);
+      }
+      const out = usbState.readBuffer.slice(0, n);
+      usbState.readBuffer = usbState.readBuffer.slice(n);
+      return out;
+    }
+
+    async function sendCmdWithAck(transport, cmd, payload = null, ackTimeout = 4000) {
+      const chunks = [];
+      chunks.push(Uint8Array.of(cmd));
+      if (payload) chunks.push(payload);
+
+      for (const c of chunks) {
+        if (transport === 'serial') {
+          await serialState.writer.write(c);
+        } else {
+          const result = await usbState.device.transferOut(usbState.outEndpoint, c);
+          if (result.status !== 'ok') {
+            throw new Error(`USB transferOut failed (${result.status})`);
+          }
+        }
+      }
+
+      const ack = transport === 'serial'
+        ? await readExactSerial(1, ackTimeout)
+        : await readExactUsb(1, ackTimeout);
+      if (ack[0] !== cmd) {
+        throw new Error(`ACK mismatch: expected 0x${cmd.toString(16)}, got 0x${ack[0].toString(16)}`);
+      }
+    }
+
+    async function queryResolution(transport) {
+      if (transport === 'serial') {
+        await ensureSerialReaderWriter();
+        serialState.readBuffer = new Uint8Array(0);
+        await serialState.writer.write(Uint8Array.of(0x84));
+        const head = await readExactSerial(2, 4000);
+        if (head[0] !== 0x84) {
+          throw new Error(`resolution response mismatch: 0x${head[0].toString(16)}`);
+        }
+        const dataLen = head[1];
+        const data = await readExactSerial(dataLen, 4000);
+        if (dataLen < 5) {
+          throw new Error(`resolution payload too short: ${dataLen}`);
+        }
+        const width = data[0] | (data[1] << 8);
+        const height = data[2] | (data[3] << 8);
+        const bpp = data[4];
+        applyResolution(width, height, bpp, transport);
+      } else {
+        if (!usbConnected()) throw new Error('WebUSB not connected');
+        usbState.readBuffer = new Uint8Array(0);
+        const out = await usbState.device.transferOut(usbState.outEndpoint, Uint8Array.of(0x84));
+        if (out.status !== 'ok') {
+          throw new Error(`USB transferOut failed (${out.status})`);
+        }
+        const head = await readExactUsb(2, 4000);
+        if (head[0] !== 0x84) {
+          throw new Error(`resolution response mismatch: 0x${head[0].toString(16)}`);
+        }
+        const dataLen = head[1];
+        const data = await readExactUsb(dataLen, 4000);
+        if (dataLen < 5) {
+          throw new Error(`resolution payload too short: ${dataLen}`);
+        }
+        const width = data[0] | (data[1] << 8);
+        const height = data[2] | (data[3] << 8);
+        const bpp = data[4];
+        applyResolution(width, height, bpp, transport);
+      }
+    }
+
+    function applyResolution(width, height, bpp, transport) {
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+        throw new Error(`invalid resolution ${width}x${height}`);
+      }
+      TARGET_W = width;
+      TARGET_H = height;
+      syncTargetGeometry();
+      updateMeta();
+      renderAll();
+      setStatus(`[${transport}] 解像度 ${width}x${height} / ${bpp}bpp`);
+    }
+
+    async function sendImage(transport) {
+      const imgData = renderBWTarget();
+      const payload = packPayload(imgData);
+      const chunkBytes = CHUNK_BYTES;
+
+      if (transport === 'serial') {
+        await ensureSerialReaderWriter();
+        serialState.readBuffer = new Uint8Array(0);
+      } else {
+        if (!usbConnected()) throw new Error('WebUSB not connected');
+        usbState.readBuffer = new Uint8Array(0);
+      }
+
+      setStatus(`[${transport}] clear image buffer...`);
+      await sendCmdWithAck(transport, 0x81, null, 1000);
+
+      let sent = 0;
+      for (let off = 0; off < payload.length; off += chunkBytes) {
+        const chunk = payload.slice(off, off + chunkBytes);
+        const n = chunk.length;
+        const frame = new Uint8Array(2 + n);
+        frame[0] = n & 0xff;
+        frame[1] = (n >> 8) & 0xff;
+        frame.set(chunk, 2);
+
+        await sendCmdWithAck(transport, 0x82, frame, 100);
+        sent += n;
+        setStatus(`[${transport}] sending... ${sent}/${payload.length}`);
+      }
+
+      setStatus(`[${transport}] show...`);
+      await sendCmdWithAck(transport, 0x83, null, 4000);
+      setStatus(`[${transport}] 送信完了`);
+    }
+
+    async function connectSerial() {
+      if (!('serial' in navigator)) {
+        throw new Error('このブラウザは Web Serial API 非対応です (Chrome/Edge 推奨)');
+      }
+      serialState.port = await navigator.serial.requestPort();
+      await serialState.port.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: 'none' });
+      serialState.reader = null;
+      serialState.writer = null;
+      serialState.readBuffer = new Uint8Array(0);
+      await queryResolution('serial');
+      updateMeta();
+      setStatus('[serial] 接続済み');
+    }
+
+    async function disconnectSerial() {
+      try {
+        if (serialState.reader) {
+          await serialState.reader.cancel();
+          serialState.reader.releaseLock();
+          serialState.reader = null;
+        }
+      } catch (_) {}
+      try {
+        if (serialState.writer) {
+          serialState.writer.releaseLock();
+          serialState.writer = null;
+        }
+      } catch (_) {}
+      if (serialState.port) {
+        await serialState.port.close();
+      }
+      serialState.port = null;
+      serialState.readBuffer = new Uint8Array(0);
+      updateMeta();
+      setStatus('[serial] 切断しました');
+    }
+
+    function findUsbInterface(device) {
+      const USB_CLASS_VENDOR_SPEC = 0xff;
+      for (const iface of device.configuration.interfaces) {
+        for (const alternate of iface.alternates) {
+          if (alternate.interfaceClass !== USB_CLASS_VENDOR_SPEC) {
+            continue;
+          }
+          let inEp = null;
+          let outEp = null;
+          let inPacketSize = 64;
+          for (const ep of alternate.endpoints) {
+            if (inEp === null && ep.direction === 'in') {
+              inEp = ep.endpointNumber;
+              inPacketSize = ep.packetSize || 64;
+            }
+            if (outEp === null && ep.direction === 'out') outEp = ep.endpointNumber;
+          }
+          if (inEp !== null && outEp !== null) {
+            return {
+              interfaceNumber: iface.interfaceNumber,
+              alternateSetting: alternate.alternateSetting,
+              inEndpoint: inEp,
+              outEndpoint: outEp,
+              inPacketSize,
+            };
+          }
+        }
+      }
+      throw new Error('Vendor class (0xFF) interface with IN/OUT endpoints not found');
+    }
+
+    async function connectUsb() {
+      if (!('usb' in navigator)) {
+        throw new Error('このブラウザは WebUSB API 非対応です');
+      }
+      const device = await navigator.usb.requestDevice({ filters:[] });
+      await device.open();
+      if (device.configuration === null) {
+        await device.selectConfiguration(1);
+      }
+      const found = findUsbInterface(device);
+      await device.claimInterface(found.interfaceNumber);
+      if (found.alternateSetting !== undefined && found.alternateSetting !== null) {
+        await device.selectAlternateInterface(found.interfaceNumber, found.alternateSetting);
+      }
+      // TinyUSB WebUSB handshake: class request 0x22 with non-zero wValue.
+      const ctrl = await device.controlTransferOut(
+        {
+          requestType: 'class',
+          recipient: 'interface',
+          request: 0x22,
+          value: 0x0001,
+          index: found.interfaceNumber,
+        },
+        new Uint8Array(0),
+      );
+      if (ctrl.status !== 'ok') {
+        throw new Error(`USB controlTransferOut(0x22) failed (${ctrl.status})`);
+      }
+      usbState.device = device;
+      usbState.interfaceNumber = found.interfaceNumber;
+      usbState.alternateSetting = found.alternateSetting;
+      usbState.inEndpoint = found.inEndpoint;
+      usbState.outEndpoint = found.outEndpoint;
+      usbState.inPacketSize = found.inPacketSize || 64;
+      usbState.readBuffer = new Uint8Array(0);
+      await queryResolution('usb');
+      updateMeta();
+      setStatus('[webusb] 接続済み');
+    }
+
+    async function disconnectUsb() {
+      if (!usbState.device) return;
+      try {
+        if (usbState.interfaceNumber !== null) {
+          await usbState.device.controlTransferOut(
+            {
+              requestType: 'class',
+              recipient: 'interface',
+              request: 0x22,
+              value: 0x0000,
+              index: usbState.interfaceNumber,
+            },
+            new Uint8Array(0),
+          );
+        }
+      } catch (_) {}
+      try {
+        if (usbState.interfaceNumber !== null) {
+          await usbState.device.releaseInterface(usbState.interfaceNumber);
+        }
+      } catch (_) {}
+      try {
+        await usbState.device.close();
+      } catch (_) {}
+      usbState.device = null;
+      usbState.interfaceNumber = null;
+      usbState.alternateSetting = null;
+      usbState.inEndpoint = null;
+      usbState.outEndpoint = null;
+      usbState.inPacketSize = 64;
+      usbState.readBuffer = new Uint8Array(0);
+      updateMeta();
+      setStatus('[webusb] 切断しました');
+    }
+
+    function onImageSelected(file) {
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        srcImage = img;
+        loadedViewState = {
+          zoom: 1.0,
+          panX: 0,
+          panY: 0,
+          rotationDeg: 0,
+        };
+        resetView();
+        setStatus(`画像読み込み: ${img.width}x${img.height}`);
+        URL.revokeObjectURL(url);
+      };
+      img.onerror = () => {
+        setStatus('画像読み込み失敗', true);
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    }
+
+    function canvasPointToStateDelta(dx, dy) {
+      const factor = TARGET_W / ui.editorCanvas.width;
+      return { dx: dx * factor, dy: dy * factor };
+    }
+
+    function getTwoPointers() {
+      const points = Array.from(activePointers.values());
+      if (points.length < 2) return null;
+      return [points[0], points[1]];
+    }
+
+    function pointerMetrics(p1, p2) {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      return {
+        distance: Math.hypot(dx, dy),
+        angle: Math.atan2(dy, dx),
+        centerX: (p1.x + p2.x) / 2,
+        centerY: (p1.y + p2.y) / 2,
+      };
+    }
+
+    function normalizeDeltaAngle(rad) {
+      let a = rad;
+      while (a > Math.PI) a -= Math.PI * 2;
+      while (a < -Math.PI) a += Math.PI * 2;
+      return a;
+    }
+
+    function startPinchGesture() {
+      const pair = getTwoPointers();
+      if (!pair) return;
+      const m = pointerMetrics(pair[0], pair[1]);
+      pinchGesture = {
+        startDistance: Math.max(1, m.distance),
+        startAngle: m.angle,
+        startCenterX: m.centerX,
+        startCenterY: m.centerY,
+        startZoom: state.zoom,
+        startRotationDeg: state.rotationDeg,
+        startPanX: state.panX,
+        startPanY: state.panY,
+      };
+      dragPointerId = null;
+    }
+
+    function updatePinchGesture() {
+      if (!pinchGesture) return;
+      const pair = getTwoPointers();
+      if (!pair) return;
+      const m = pointerMetrics(pair[0], pair[1]);
+      const zoomRatio = m.distance / pinchGesture.startDistance;
+      state.zoom = Math.max(0.1, Math.min(20.0, pinchGesture.startZoom * zoomRatio));
+      const dAngle = normalizeDeltaAngle(m.angle - pinchGesture.startAngle);
+      state.rotationDeg = pinchGesture.startRotationDeg + dAngle * 180 / Math.PI;
+
+      const dx = m.centerX - pinchGesture.startCenterX;
+      const dy = m.centerY - pinchGesture.startCenterY;
+      const d = canvasPointToStateDelta(dx, dy);
+      state.panX = pinchGesture.startPanX + d.dx;
+      state.panY = pinchGesture.startPanY + d.dy;
+      ui.zoom.value = String(Math.round(state.zoom * 100));
+      syncRotationUI();
+      renderAll();
+    }
+
+    ui.imageFile.addEventListener('change', (e) => onImageSelected(e.target.files[0]));
+
+    ui.bwMode.addEventListener('change', () => {
+      state.bwMode = ui.bwMode.value;
+      syncBwParamUI();
+      renderAll();
+    });
+
+    ui.paramSlider.addEventListener('input', () => {
+      if (state.bwMode === 'threshold') {
+        state.threshold = Number(ui.paramSlider.value);
+      } else {
+        state.gamma100 = Number(ui.paramSlider.value);
+      }
+      syncBwParamUI();
+      renderAll();
+    });
+
+    ui.zoom.addEventListener('input', () => {
+      state.zoom = Number(ui.zoom.value) / 100;
+      renderAll();
+    });
+
+    ui.rotation.addEventListener('input', () => {
+      state.rotationDeg = Number(ui.rotation.value);
+      syncRotationUI();
+      renderAll();
+    });
+
+    ui.rotateRight90.addEventListener('click', () => {
+      // Snap to the next 90-degree step (clockwise).
+      state.rotationDeg = Math.ceil((state.rotationDeg + 0.0001) / 90) * 90;
+      syncRotationUI();
+      renderAll();
+    });
+
+    ui.resetView.addEventListener('click', resetView);
+
+    ui.editorCanvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      ui.editorCanvas.classList.add('dragging');
+      ui.editorCanvas.setPointerCapture(e.pointerId);
+      if (activePointers.size === 1) {
+        dragPointerId = e.pointerId;
+        dragLastX = e.clientX;
+        dragLastY = e.clientY;
+        state.dragging = true;
+        pinchGesture = null;
+      } else if (activePointers.size >= 2) {
+        state.dragging = false;
+        startPinchGesture();
+      }
+    });
+
+    ui.editorCanvas.addEventListener('pointermove', (e) => {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.size >= 2) {
+        updatePinchGesture();
+        return;
+      }
+      if (!state.dragging || dragPointerId !== e.pointerId) return;
+      const dx = e.clientX - dragLastX;
+      const dy = e.clientY - dragLastY;
+      dragLastX = e.clientX;
+      dragLastY = e.clientY;
+      const d = canvasPointToStateDelta(dx, dy);
+      state.panX += d.dx;
+      state.panY += d.dy;
+      renderAll();
+    });
+
+    function onPointerEnd(e) {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size >= 2) {
+        startPinchGesture();
+      } else if (activePointers.size === 1) {
+        const remaining = Array.from(activePointers.entries())[0];
+        dragPointerId = remaining[0];
+        dragLastX = remaining[1].x;
+        dragLastY = remaining[1].y;
+        state.dragging = true;
+        pinchGesture = null;
+      } else {
+        dragPointerId = null;
+        state.dragging = false;
+        pinchGesture = null;
+      }
+      if (activePointers.size === 0) {
+        ui.editorCanvas.classList.remove('dragging');
+      }
+      try { ui.editorCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+
+    ui.editorCanvas.addEventListener('pointerup', (e) => {
+      onPointerEnd(e);
+    });
+    ui.editorCanvas.addEventListener('pointercancel', (e) => {
+      onPointerEnd(e);
+    });
+    ui.editorCanvas.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      state.dragging = false;
+      activePointers.delete(e.pointerId);
+      dragPointerId = null;
+      pinchGesture = null;
+      ui.editorCanvas.classList.remove('dragging');
+    });
+
+    ui.editorCanvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.06 : 1 / 1.06;
+      state.zoom = Math.max(0.1, Math.min(20.0, state.zoom * factor));
+      ui.zoom.value = String(Math.round(state.zoom * 100));
+      renderAll();
+    }, { passive: false });
+
+    ui.serialConnectBtn.addEventListener('click', async () => {
+      try {
+        await connectSerial();
+      } catch (err) {
+        setStatus(`[serial] 接続エラー: ${err.message}`, true);
+      }
+    });
+
+    ui.serialDisconnectBtn.addEventListener('click', async () => {
+      try {
+        await disconnectSerial();
+      } catch (err) {
+        setStatus(`[serial] 切断エラー: ${err.message}`, true);
+      }
+    });
+
+    ui.serialSendBtn.addEventListener('click', async () => {
+      ui.serialSendBtn.disabled = true;
+      try {
+        await sendImage('serial');
+      } catch (err) {
+        setStatus(`[serial] 送信エラー: ${err.message}`, true);
+      } finally {
+        updateTransportButtons();
+      }
+    });
+
+    ui.usbConnectBtn.addEventListener('click', async () => {
+      try {
+        await connectUsb();
+      } catch (err) {
+        setStatus(`[webusb] 接続エラー: ${err.message}`, true);
+      }
+    });
+
+    ui.usbDisconnectBtn.addEventListener('click', async () => {
+      try {
+        await disconnectUsb();
+      } catch (err) {
+        setStatus(`[webusb] 切断エラー: ${err.message}`, true);
+      }
+    });
+
+    ui.usbSendBtn.addEventListener('click', async () => {
+      ui.usbSendBtn.disabled = true;
+      try {
+        await sendImage('usb');
+      } catch (err) {
+        setStatus(`[webusb] 送信エラー: ${err.message}`, true);
+      } finally {
+        updateTransportButtons();
+      }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (serialConnected()) {
+        disconnectSerial().catch(() => {});
+      }
+      if (usbConnected()) {
+        disconnectUsb().catch(() => {});
+      }
+    });
+
+    updateMeta();
+    syncTargetGeometry();
+    syncBwParamUI();
+    syncRotationUI();
+    renderAll();
+  </script>
+</body>
+</html>
