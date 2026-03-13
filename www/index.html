@@ -105,14 +105,16 @@
       display: grid;
       gap: 16px;
       align-content: start;
+      justify-items: center;
     }
 
     .viewer {
       position: relative;
-      aspect-ratio: 250 / 122;
-      width: min(100%, 1080px);
-      max-height: calc(100vh - 180px);
-      margin: 0 auto;
+      display: inline-block;
+      padding: 0;
+      width: fit-content;
+      max-width: 100%;
+      margin: 0;
       border: 1px solid var(--line);
       border-radius: 12px;
       background: #c6cfdb;
@@ -120,8 +122,10 @@
     }
 
     #editorCanvas {
-      width: 100%;
-      height: 100%;
+      width: auto;
+      height: auto;
+      max-width: min(100%, 1080px);
+      max-height: calc(100vh - 180px);
       display: block;
       touch-action: none;
       cursor: grab;
@@ -153,6 +157,9 @@
         height: auto;
       }
       .viewer {
+        max-width: 100%;
+      }
+      #editorCanvas {
         max-height: 45vh;
       }
     }
@@ -219,8 +226,8 @@
 
       <div class="meta" id="serialMeta">Port: -
 Baud: 115200
-Target: 250x122
-Payload: 3843 bytes</div>
+Target: detecting...
+Payload: -</div>
       <div class="status" id="status"></div>
 
       <div style="font-size:12px;color:#4c5563;">表示は2値化結果です。ドラッグでパン / ホイールでズームして表示領域を調整します。</div>
@@ -228,7 +235,7 @@ Payload: 3843 bytes</div>
 
     <main class="preview-wrap">
       <section id="viewer" class="panel viewer">
-        <canvas id="editorCanvas" width="1250" height="610"></canvas>
+        <canvas id="editorCanvas" width="1000" height="488"></canvas>
       </section>
     </main>
   </div>
@@ -236,6 +243,7 @@ Payload: 3843 bytes</div>
   <script>
     let TARGET_W = 250;
     let TARGET_H = 122;
+    let TARGET_TRANSFER_H = 122;
     const BAUD = 115200;
     const CHUNK_BYTES = 62;
 
@@ -323,13 +331,23 @@ Payload: 3843 bytes</div>
       return Math.ceil(TARGET_W / 8) * TARGET_H;
     }
 
+    function bytesPerBand(bandHeight = TARGET_TRANSFER_H) {
+      return Math.ceil(TARGET_W / 8) * bandHeight;
+    }
+
+    function editorPixelScale() {
+      const maxPreviewPixels = 1400;
+      return Math.max(1, Math.floor(maxPreviewPixels / Math.max(TARGET_W, TARGET_H)));
+    }
+
     function syncTargetGeometry() {
       composeCanvas.width = TARGET_W;
       composeCanvas.height = TARGET_H;
       bwPreviewCanvas.width = TARGET_W;
       bwPreviewCanvas.height = TARGET_H;
-      ui.editorCanvas.width = TARGET_W * 5;
-      ui.editorCanvas.height = TARGET_H * 5;
+      const scale = editorPixelScale();
+      ui.editorCanvas.width = TARGET_W * scale;
+      ui.editorCanvas.height = TARGET_H * scale;
       ui.viewer.style.aspectRatio = `${TARGET_W} / ${TARGET_H}`;
     }
 
@@ -354,7 +372,7 @@ Payload: 3843 bytes</div>
     function updateMeta() {
       const serialText = serialConnected() ? 'connected' : '-';
       const usbText = usbConnected() ? 'connected' : '-';
-      ui.serialMeta.textContent = `Serial: ${serialText}\nWebUSB: ${usbText}\nBaud: ${BAUD}\nTarget: ${TARGET_W}x${TARGET_H}\nPayload: ${bytesPerPayload()} bytes`;
+      ui.serialMeta.textContent = `Serial: ${serialText}\nWebUSB: ${usbText}\nBaud: ${BAUD}\nTarget: ${TARGET_W}x${TARGET_H}\nTransfer height: ${TARGET_TRANSFER_H}\nFull payload: ${bytesPerPayload()} bytes\nBand payload: ${bytesPerBand()} bytes`;
       updateTransportButtons();
     }
 
@@ -568,6 +586,30 @@ Payload: 3843 bytes</div>
       return out;
     }
 
+    function packPayloadBand(imgData, startY, bandHeight) {
+      const rowBytes = Math.ceil(TARGET_W / 8);
+      const out = new Uint8Array(rowBytes * bandHeight);
+      const data = imgData.data;
+      let idx = 0;
+
+      for (let y = startY; y < startY + bandHeight; y++) {
+        for (let xb = 0; xb < rowBytes; xb++) {
+          let b = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const x = xb * 8 + bit;
+            b <<= 1;
+            if (x < TARGET_W) {
+              const p = (y * TARGET_W + x) * 4;
+              const isBlack = data[p] === 0;
+              if (isBlack) b |= 1;
+            }
+          }
+          out[idx++] = b;
+        }
+      }
+      return out;
+    }
+
     async function ensureSerialReaderWriter() {
       if (!serialState.port) throw new Error('Serial not connected');
       if (!serialState.reader) {
@@ -665,7 +707,7 @@ Payload: 3843 bytes</div>
         const width = data[0] | (data[1] << 8);
         const height = data[2] | (data[3] << 8);
         const bpp = data[4];
-        applyResolution(width, height, bpp, transport);
+        applyResolution(width, height, bpp, dataLen >= 7 ? (data[5] | (data[6] << 8)) : height, transport);
       } else {
         if (!usbConnected()) throw new Error('WebUSB not connected');
         usbState.readBuffer = new Uint8Array(0);
@@ -685,16 +727,20 @@ Payload: 3843 bytes</div>
         const width = data[0] | (data[1] << 8);
         const height = data[2] | (data[3] << 8);
         const bpp = data[4];
-        applyResolution(width, height, bpp, transport);
+        applyResolution(width, height, bpp, dataLen >= 7 ? (data[5] | (data[6] << 8)) : height, transport);
       }
     }
 
-    function applyResolution(width, height, bpp, transport) {
+    function applyResolution(width, height, bpp, transferHeight, transport) {
       if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
         throw new Error(`invalid resolution ${width}x${height}`);
       }
+      if (!Number.isFinite(transferHeight) || transferHeight < 1) {
+        throw new Error(`invalid transfer height ${transferHeight}`);
+      }
       TARGET_W = width;
       TARGET_H = height;
+      TARGET_TRANSFER_H = Math.min(height, transferHeight);
       syncTargetGeometry();
       updateMeta();
       renderAll();
@@ -703,7 +749,6 @@ Payload: 3843 bytes</div>
 
     async function sendImage(transport) {
       const imgData = renderBWTarget();
-      const payload = packPayload(imgData);
       const chunkBytes = CHUNK_BYTES;
 
       if (transport === 'serial') {
@@ -714,25 +759,34 @@ Payload: 3843 bytes</div>
         usbState.readBuffer = new Uint8Array(0);
       }
 
-      setStatus(`[${transport}] clear image buffer...`);
-      await sendCmdWithAck(transport, 0x81, null, 1000);
+      setStatus(`[${transport}] clear display...`);
+      await sendCmdWithAck(transport, 0x80, null, 10000);
 
       let sent = 0;
-      for (let off = 0; off < payload.length; off += chunkBytes) {
-        const chunk = payload.slice(off, off + chunkBytes);
-        const n = chunk.length;
-        const frame = new Uint8Array(2 + n);
-        frame[0] = n & 0xff;
-        frame[1] = (n >> 8) & 0xff;
-        frame.set(chunk, 2);
+      const totalBytes = bytesPerPayload();
+      for (let startY = 0; startY < TARGET_H; startY += TARGET_TRANSFER_H) {
+        const bandHeight = Math.min(TARGET_TRANSFER_H, TARGET_H - startY);
+        const payload = packPayloadBand(imgData, startY, bandHeight);
 
-        await sendCmdWithAck(transport, 0x82, frame, 100);
-        sent += n;
-        setStatus(`[${transport}] sending... ${sent}/${payload.length}`);
+        setStatus(`[${transport}] prepare band ${startY}-${startY + bandHeight - 1}`);
+        await sendCmdWithAck(transport, 0x81, null, 10000);
+
+        for (let off = 0; off < payload.length; off += chunkBytes) {
+          const chunk = payload.slice(off, off + chunkBytes);
+          const n = chunk.length;
+          const frame = new Uint8Array(2 + n);
+          frame[0] = n & 0xff;
+          frame[1] = (n >> 8) & 0xff;
+          frame.set(chunk, 2);
+
+          await sendCmdWithAck(transport, 0x82, frame, 10000);
+          sent += n;
+          setStatus(`[${transport}] sending... ${sent}/${totalBytes} (${startY + bandHeight}/${TARGET_H} rows)`);
+        }
+
+        setStatus(`[${transport}] draw band ${startY}-${startY + bandHeight - 1}`);
+        await sendCmdWithAck(transport, 0x83, null, 10000);
       }
-
-      setStatus(`[${transport}] show...`);
-      await sendCmdWithAck(transport, 0x83, null, 4000);
       setStatus(`[${transport}] 送信完了`);
     }
 
