@@ -21,9 +21,9 @@
 #define MAX_HEIGHT(EPD) (EPD::HEIGHT <= MAX_DISPLAY_BUFFER_SIZE / (EPD::WIDTH / 8) ? EPD::HEIGHT : MAX_DISPLAY_BUFFER_SIZE / (EPD::WIDTH / 8))
 
 #define PIN_EPD_CS SS
-#define PIN_EPD_DC PA1
-#define PIN_EPD_RES PA2
-#define PIN_EPD_BUSY PA3
+#define PIN_EPD_DC PA0 //9
+#define PIN_EPD_RES PA1 //8
+#define PIN_EPD_BUSY PA2 //7
 
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> display(
   GxEPD2_DRIVER_CLASS(PIN_EPD_CS, PIN_EPD_DC, PIN_EPD_RES, PIN_EPD_BUSY));
@@ -38,7 +38,7 @@ constexpr int PIN_LED = PA8;
 
 void setup() {
   Serial.begin(115200);
-  Serial.setTimeout(50);
+  TinyUSBDevice.setProductDescriptor("EPD adapter");
 
   pinMode(PIN_LED, OUTPUT);
 
